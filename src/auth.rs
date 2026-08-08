@@ -134,10 +134,6 @@ struct AuthorizeAnnouncement<'a> {
     expires_in_seconds: u64,
 }
 
-/// Writes the authorization URL to stdout before waiting for the callback.
-///
-/// The authorization URL redirects to a loopback address, so it only completes
-/// in a browser running on the same machine as the CLI.
 fn write_authorization_notice(authorize_url: &str, options: LoginOptions) -> Result<()> {
     let notice = authorization_notice(authorize_url, options)?;
     let stdout = io::stdout();
@@ -280,11 +276,6 @@ async fn finish_callback(
     Ok(())
 }
 
-/// What the callback page is for.
-///
-/// Not a styling choice: an agent-driven session has a plan behind it and gets
-/// shown where the workflow has reached, while someone who ran `login` in a
-/// terminal has none and is handed the prompt that starts one instead.
 enum Shape {
     Agent(Vec<crate::agent::RailStep>),
     Human,
@@ -403,10 +394,6 @@ const TICK: &str = concat!(
     r#"<path d="M4.6 8.2 6.9 10.5 11.4 6"/></svg>"#
 );
 
-/// The prompt handed to someone who signed in without an agent driving it.
-///
-/// Brainpod deploys run through an agent, so the useful thing to give a person
-/// at this point is the sentence that starts one — not a congratulation.
 const PROMPT: &str = "Deploy this project to Brainpod using the Brainpod skill from github.com/brainpodnl/skills.\n\nI'm already signed in with the brainpod CLI. Work out what the project needs and hand me the live URL when it's up.";
 
 fn escape(text: &str) -> String {
@@ -416,12 +403,8 @@ fn escape(text: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// The live session console, if one answers.
-///
-/// Probed rather than trusted: `agent serve` advertises its URL in the session
-/// file and never withdraws it, since no guard survives the kill that ends that
-/// process. Sending the browser to an address nobody is listening on would turn
-/// the one page confirming the sign-in into a connection error.
+/// Probed rather than trusted: `agent serve` never withdraws the URL it
+/// advertises, so the session file routinely outlives the server that wrote it.
 async fn handover() -> Option<String> {
     let url = crate::agent::console_url()?;
     let http = reqwest::Client::builder()
@@ -432,14 +415,10 @@ async fn handover() -> Option<String> {
     answered.then_some(url)
 }
 
-/// A loopback server either answers immediately or is not there.
 const HANDOVER_PROBE: Duration = Duration::from_millis(500);
 
-/// Hands this tab to the live console, after a beat.
-///
-/// The beat is the point. This page is the only confirmation the user gets that
-/// signing in worked, and a navigation they never see reads as the click having
-/// done nothing.
+/// The delay is deliberate: this page is the only confirmation the user gets
+/// that signing in worked.
 fn refresh(handover: Option<&str>) -> String {
     handover
         .map(|url| {
@@ -577,7 +556,6 @@ mod tests {
         );
     }
 
-    /// The URL reaches this page from a file in the user's checkout.
     #[test]
     fn cannot_be_talked_out_of_the_refresh_attribute() {
         let escaped = refresh(Some(r#"http://127.0.0.1:1/" onload="x"#));

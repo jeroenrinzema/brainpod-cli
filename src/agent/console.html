@@ -109,9 +109,8 @@
 (() => {
   "use strict";
 
-  /* Nothing heartbeats between milestones except the commands themselves, and a
-     minute of silence during a build is normal. Matches deploy --wait's
-     default timeout, so a genuinely stuck deploy still surfaces. */
+  /* Matches deploy --wait's default timeout: a minute of silence mid-build is
+     normal, and a genuinely stuck deploy still surfaces. */
   const STALE_AFTER = 90000;
   const POLL = 400;
 
@@ -150,8 +149,7 @@
     blade.style.width = "0%";
     void blade.offsetWidth;
     blade.style.transition = "";
-    /* Stays hidden until the deploy lands: display:none is also what keeps the
-       animation from having already played by the time it should fire. */
+    /* display:none is what keeps the animation from having already played. */
     burst.style.display = "none";
   }
 
@@ -173,12 +171,9 @@
              "<div><h2>" + escape(step.label) + when + "</h2>" + detail + "</div></div>";
     }).join("");
 
-    /* Only touch the DOM when something actually changed. Rewriting it on every
-       poll replaces the running step's element, and a CSS animation restarts
-       from zero each time its element is recreated — which is why the spinner
-       sat still. Compared against what was last generated, not against
-       innerHTML: reading that back returns the browser's normalised markup,
-       which never equals the string that produced it. */
+    /* Recreating an element restarts its CSS animation, so rewriting this on
+       every poll leaves the running step's spinner sitting still. Compared
+       against what was generated, not innerHTML, which reads back normalised. */
     if (markup !== drawn) {
       drawn = markup;
       rail.innerHTML = markup;
@@ -188,24 +183,16 @@
     blade.style.width = state.steps.length ? (done / state.steps.length) * 100 + "%" : "0%";
   }
 
-  /* One reader for both ways this page is delivered: the URL is relative, so
-     ./session.log is the sibling file when opened locally and a served route
-     when it is not. One log rather than one per source, because separate files
-     carry no timestamps and nothing could put them back in order. */
-  /* `seen` is when the log last grew. Output arriving is proof the workflow is
-     alive, and during a long build or push it is the only proof there is: the
-     session file is only rewritten when a step changes, which can be minutes
-     apart while plenty is happening. */
+  /* `seen` is when the log last grew, which during a long build is the only
+     proof of life there is: the session file only moves when a step changes. */
   const tail = { at: 0, text: "", busy: false, seen: 0, decoder: new TextDecoder() };
 
   async function readLog() {
     if (tail.busy) return;
     tail.busy = true;
 
-    /* Ranges are only trustworthy when served: opened as a local file the range
-       is honoured but answered 200 with no Content-Range, which is
-       indistinguishable from the whole file. Re-reading a local file is cheap,
-       so only tail by offset over HTTP. */
+    /* A file:// range is honoured but answered 200 with no Content-Range, which
+       is indistinguishable from the whole file. Re-reading it is cheap. */
     const ranged = location.protocol !== "file:" && tail.at > 0;
 
     try {
@@ -221,16 +208,14 @@
       const chunk = tail.decoder.decode(buffer, { stream: true });
 
       tail.text = partial ? tail.text + chunk : chunk;
-      /* Offsets are byte counts; a JS string length is not one once anything
-         outside ASCII shows up in a build log. */
+      /* Byte counts; a JS string length is not one outside ASCII. */
       const range = response.headers.get("Content-Range");
       const size = range
         ? Number(range.split("/")[1])
         : partial
           ? tail.at + buffer.byteLength
           : buffer.byteLength;
-      /* Growth, not arrival: read whole from a file:// page, every poll returns
-         the same bytes again and would look like activity forever. */
+      /* Growth, not arrival: read whole, every poll returns the same bytes. */
       if (size > tail.at) tail.seen = Date.now();
       tail.at = size;
 
@@ -310,14 +295,9 @@
     if (latest) paint(latest);
   }
 
-  /* Push where a server is running, polling everywhere else. The events only
-     say something moved; the page then re-reads exactly what it reads when
-     polling, so there is one code path either way. */
-  /* A stream that never opened is not one to keep trying. Opened as a local
-     file this page is a different origin from the server, and the browser will
-     refuse the stream every time it is offered — which, without this, is every
-     poll for as long as the console is up. One that opened and then dropped is
-     a server restart, and worth reconnecting to. */
+  /* A stream that never opened is not one to keep trying: from a file:// page
+     this is a cross-origin request the browser refuses every time it is
+     offered. One that opened and then dropped is a restart, so reconnect. */
   function listen(url) {
     if (pushed === url || refused === url) return;
     pushed = url;

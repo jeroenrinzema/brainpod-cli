@@ -482,11 +482,6 @@ async fn run_command(command: &mut Command, description: &str) -> Result<()> {
     run_command_with_timeout(command, description, PROCESS_TIMEOUT).await
 }
 
-/// Forwards a child stream to stderr, mirroring it into the console's build log.
-///
-/// Each caller opens its own appender: the file is opened in append mode, so
-/// stdout and stderr interleave the way they would in a terminal without
-/// needing to share a handle, and every line carries the `[build]` tag.
 async fn mirror<R>(source: R) -> std::io::Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -511,10 +506,6 @@ async fn run_command_with_timeout(
     description: &str,
     timeout: Duration,
 ) -> Result<()> {
-    // Build output is the whole reason the session console has an output panel,
-    // so mirror it there when one exists. Without a console nothing changes:
-    // stdout is copied through byte for byte and the child keeps this process's
-    // stderr, which is what preserves a terminal's redrawing progress display.
     let capture = crate::agent::is_active();
 
     let mut child = command

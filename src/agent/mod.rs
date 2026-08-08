@@ -28,7 +28,6 @@ const SHELL_CSS: &str = include_str!("../callback.css");
 const CONSOLE_CSS: &str = include_str!("console.css");
 const CONFETTI: &str = include_str!("../callback-confetti.html");
 
-/// The console page with its shared assets folded in.
 fn console_page() -> String {
     CONSOLE_TEMPLATE
         .replace("/*@@SHELL@@*/", SHELL_CSS)
@@ -44,32 +43,24 @@ const IGNORE_COMMENT: &str = "# Brainpod session console";
 
 const SCHEMA: u32 = 3;
 const LOG_FILE: &str = "session.log";
-/// Enough for the user to see where this is going without becoming a wall.
 const RAIL_SHOWN: usize = 6;
-/// Environment variables that name the chat this process was launched from, in
-/// the order they are trusted. Every one of them is set by the harness itself,
-/// so none of them can be relied on being present.
+/// In the order they are trusted. Every one is set by a harness, so none of
+/// them can be relied on being present.
 const CHAT_VARIABLES: [&str; 3] = [
     "BRAINPOD_AGENT_SESSION",
     "CLAUDE_CODE_SESSION_ID",
     "CODEX_THREAD_ID",
 ];
 
-/// The `--session` value, once the top-level parser has seen it.
-///
-/// A global rather than a threaded argument because `image build` mirrors its
-/// output into the console through [`sink`], several layers below anything
-/// holding the parsed options.
+/// A global rather than a threaded argument because `image build` reaches the
+/// console through [`sink`], several layers below anything holding the options.
 static SESSION_OVERRIDE: OnceLock<Option<String>> = OnceLock::new();
 
 pub fn configure(session: Option<String>) {
     let _ = SESSION_OVERRIDE.set(session.filter(|value| !value.trim().is_empty()));
 }
 
-/// The chat this process belongs to, if anything says so.
-///
-/// `None` is ordinary: Cursor exposes no such value today, and a harness that
-/// gains one later only needs adding to [`CHAT_VARIABLES`].
+/// `None` is ordinary: Cursor exposes no such value today.
 fn chat_id() -> Option<String> {
     if let Some(Some(session)) = SESSION_OVERRIDE.get() {
         return Some(session.clone());
@@ -81,7 +72,6 @@ fn chat_id() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-/// A chat identifier reduced to something safe to name a directory.
 fn slug(chat: &str) -> String {
     let digest = Sha256::digest(chat.as_bytes());
     digest[..6].iter().map(|byte| format!("{byte:02x}")).collect()
@@ -244,22 +234,18 @@ struct Session {
     message: Option<String>,
     #[serde(default)]
     steps: Vec<Step>,
-    /// Where a running `agent serve` will push change events, when there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     events: Option<String>,
-    /// Where a running `agent serve` answers, so a page outside the console can
-    /// hand its tab over to the live one instead of showing a snapshot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     console: Option<String>,
-    /// Whether the agent declared its steps up front. When it did, the rail is
-    /// its to write and nothing else may add to it.
+    /// When the agent declared its steps up front the rail is its to write, and
+    /// nothing else may add to it.
     #[serde(default)]
     planned: bool,
-    /// The chat this console belongs to, when the harness named one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     chat: Option<String>,
-    /// The processes `start` ran under, so later commands can find their way
-    /// back here without carrying an identifier.
+    /// The processes `start` ran under, so later commands find their way back
+    /// here without carrying an identifier.
     #[serde(default)]
     owners: Vec<Owner>,
 }
@@ -301,16 +287,12 @@ pub async fn handle(
     }
 }
 
-/// Serves the console over loopback until the process is killed.
-///
-/// A browser outside the agent will not read `session.json` from a `file://`
-/// page — same-directory reads are blocked there — so the console is served
-/// instead, which puts the page and its session on one origin. Announces the
-/// URL on stdout before blocking, the way `login` announces its authorization
-/// URL, so a caller can background this and read the first line.
-///
-/// The URL carries a random path because loopback is reachable by anything
-/// else running on this machine, including pages in the user's browser.
+/// Most browsers will not read `session.json` beside a `file://` page, so the
+/// console is served instead, which puts the page and its session on one
+/// origin. The URL carries a random path because loopback is reachable by
+/// anything else running on this machine, including pages in the user's
+/// browser. Announces itself on stdout before blocking, so a caller can
+/// background this and read the first line.
 async fn serve(args: ServeArgs, json: bool) -> Result<CommandOutput> {
     let directory = session_directory(args.path)?;
     let secret = identifier()?;
@@ -334,10 +316,8 @@ async fn serve(args: ServeArgs, json: bool) -> Result<CommandOutput> {
         .route(&format!("/{secret}/events"), get(events))
         .with_state(directory.clone());
 
-    // Advertise where this server answers: the console page upgrades from
-    // polling to push where its own origin allows the stream, and the sign-in
-    // page hands its tab over. Never cleared, so readers must treat it as a
-    // claim and not a fact — no guard survives the kill that ends this process.
+    // Never cleared, so readers must treat this as a claim and not a fact: no
+    // guard survives the kill that ends this process.
     let advertised = format!("{url}events");
     let root = url.clone();
     let _ = amend_at(&directory, |session| {
@@ -384,11 +364,8 @@ async fn console() -> Response {
         .into_response()
 }
 
-/// Emits a change token whenever the session or any of its logs moves.
-///
-/// Deliberately dumb: it says something changed and the page re-reads what it
-/// already knows how to read, so the polling path and the push path run exactly
-/// the same code.
+/// Says only that something changed, so the page re-reads what it already reads
+/// when polling and the two paths run the same code.
 async fn events(
     State(directory): State<PathBuf>,
 ) -> Sse<impl tokio_stream::Stream<Item = std::result::Result<Event, std::convert::Infallible>>> {
@@ -410,7 +387,6 @@ async fn events(
     .keep_alive(KeepAlive::default())
 }
 
-/// A cheap summary of everything the page reads, used to notice changes.
 fn fingerprint(directory: &Path) -> String {
     let mut parts = vec![
         fs::metadata(directory.join(SESSION_FILE))
@@ -432,7 +408,6 @@ fn fingerprint(directory: &Path) -> String {
     parts.join("|")
 }
 
-/// Serves the session log, honouring a byte range so the page can tail it.
 async fn log_file(State(directory): State<PathBuf>, headers: HeaderMap) -> Response {
     let Ok(contents) = tokio::fs::read(directory.join(LOG_FILE)).await else {
         return StatusCode::NOT_FOUND.into_response();
@@ -463,7 +438,6 @@ async fn log_file(State(directory): State<PathBuf>, headers: HeaderMap) -> Respo
     }
 }
 
-/// Parses the one range form a tailing reader needs: `bytes=start-` or a suffix.
 fn parse_range(value: &str, total: u64) -> Option<(u64, u64)> {
     let spec = value.strip_prefix("bytes=")?;
     if spec.contains(',') || total == 0 {
@@ -497,16 +471,12 @@ async fn session_state(State(directory): State<PathBuf>) -> Response {
     }
 }
 
-/// Prepares `.brainpod/` and mints a fresh session.
-///
-/// The session file is always replaced rather than merged, so a second run
-/// cannot leave the previous deploy's steps showing underneath the new one.
+/// The session file is replaced rather than merged, so a second run cannot
+/// leave the previous deploy's steps showing underneath the new one.
 fn start(args: StartArgs, pod: Option<&str>, dashboard_endpoint: &str) -> Result<CommandOutput> {
     let root = project_root(args.path)?;
     prune(&root);
 
-    // A chat that names itself gets a stable directory across restarts; one that
-    // does not still gets its own, it just cannot be rejoined by name later.
     let chat = chat_id();
     let identifier = identifier()?;
     let directory = root
@@ -521,9 +491,7 @@ fn start(args: StartArgs, pod: Option<&str>, dashboard_endpoint: &str) -> Result
         ensure_ignored(&root)?
     };
 
-    // The session is minted fresh, so its log goes with it. Leaving it would
-    // show the previous run's output under the new run's steps, the exact
-    // confusion truncating the session file exists to prevent.
+    // The session is minted fresh, so its log goes with it.
     let _ = fs::remove_file(directory.join(LOG_FILE));
 
     let console = directory.join(CONSOLE_FILE);
@@ -613,11 +581,6 @@ fn step(args: StepArgs) -> Result<CommandOutput> {
     Ok(summary(&session))
 }
 
-/// Appends stdin to the session's bounded output tail.
-///
-/// The tail is capped so the file stays a snapshot the page can re-read whole;
-/// `logDropped` is what lets the page say lines were dropped rather than imply
-/// it showed everything.
 fn log(args: LogArgs) -> Result<CommandOutput> {
     let directory = session_directory(args.path)?;
     let mut sink = open_log(&directory, &args.stream)?;
@@ -627,8 +590,6 @@ fn log(args: LogArgs) -> Result<CommandOutput> {
     Ok(summary(&read_session(&directory)?))
 }
 
-/// An appender that tags every line with where it came from.
-///
 /// One file rather than one per source: separate files carry no timestamps, so
 /// nothing could put them back in order. Append order is the ordering.
 pub struct Sink {
@@ -637,12 +598,8 @@ pub struct Sink {
 }
 
 impl Sink {
-    /// Writes one line as a single call.
-    ///
-    /// Formatting straight into the file would emit the tag, the line, and the
-    /// newline as separate writes, which is how two sources appending at once
-    /// end up spliced together mid-line. One write to a file opened for append
-    /// keeps each line whole.
+    /// One write rather than three, so two sources appending at once cannot be
+    /// spliced together mid-line.
     pub fn write(&mut self, line: &str) {
         let mut row = String::with_capacity(self.prefix.len() + line.len() + 1);
         row.push_str(&self.prefix);
@@ -672,7 +629,6 @@ fn open_log(directory: &Path, stream: &str) -> Result<Sink> {
     })
 }
 
-/// Stream names are shown on every line they tag, so keep them boring.
 fn is_stream_name(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 40
@@ -703,8 +659,6 @@ fn finish(args: FinishArgs) -> Result<CommandOutput> {
     Ok(summary(&session))
 }
 
-/// Removes this chat's console, or every chat's with `--all`.
-///
 /// Scoped by default because another chat may be mid-deploy in the same
 /// checkout, and its console is the only thing reporting that to anyone.
 fn clear(args: ScopeArgs) -> Result<CommandOutput> {
@@ -732,11 +686,8 @@ fn clear(args: ScopeArgs) -> Result<CommandOutput> {
     ))
 }
 
-/// Drops finished sessions once they are old enough to be nobody's page.
-///
-/// Without this every chat leaves a directory behind for good. Sessions still
-/// marked running are left alone however old they look: a long deploy that
-/// stopped heartbeating is exactly the one somebody is still staring at.
+/// Sessions still marked running are left alone however old they look: a long
+/// deploy that stopped heartbeating is the one somebody is still staring at.
 fn prune(root: &Path) {
     const KEEP: u64 = 1000 * 60 * 60 * 24 * 3;
 
@@ -748,19 +699,14 @@ fn prune(root: &Path) {
     }
 }
 
-/// One step as a page outside the console needs to draw it.
 pub struct RailStep {
     pub state: String,
     pub label: String,
     pub detail: Option<String>,
 }
 
-/// The running session's steps, for a page outside the console to render.
-///
-/// Lets the sign-in page the user is looking at while `login` waits show where
-/// the workflow has got to and what is still ahead, rather than being a dead
-/// end. Empty when there is no session, which is also how the caller knows
-/// nobody is driving this but the user.
+/// The running session's steps, for the sign-in page to draw. Empty when there
+/// is no session, which is how the caller knows nobody is driving this.
 pub fn rail() -> Vec<RailStep> {
     let Ok(directory) = session_directory(None) else {
         return Vec::new();
@@ -782,8 +728,7 @@ pub fn rail() -> Vec<RailStep> {
         })
         .collect();
 
-    // Keep the current step and what follows it. A long plan that has already
-    // run for a while would otherwise push the interesting part off the card.
+    // A long plan already part-run would push the interesting part off the card.
     if steps.len() > RAIL_SHOWN {
         let current = steps
             .iter()
@@ -797,10 +742,6 @@ pub fn rail() -> Vec<RailStep> {
 }
 
 /// Where the live console is answering, for a page that wants to hand over.
-///
-/// The sign-in page is the one the user is left looking at in a browser the
-/// agent cannot reach, so anything it renders itself is frozen the moment it is
-/// drawn. Where a server is up, the accurate thing to show is the console.
 pub fn console_url() -> Option<String> {
     let directory = session_directory(None).ok()?;
     let session = read_session(&directory).ok()?;
@@ -810,30 +751,21 @@ pub fn console_url() -> Option<String> {
     loopback(session.console.as_deref()?)
 }
 
-/// Accepts a console URL only where following it cannot leave this machine.
-///
-/// The session file sits in the user's checkout, so a committed one names
-/// whatever address its author chose, and a page that navigates on its word
-/// would send the user there straight after they signed in.
+/// The session file sits in the user's checkout, so a committed one could name
+/// any address at all and a page navigates on its word.
 fn loopback(url: &str) -> Option<String> {
     let parsed = reqwest::Url::parse(url).ok()?;
     (parsed.scheme() == "http" && parsed.host_str() == Some("127.0.0.1")).then(|| url.to_owned())
 }
 
-/// Whether this project has a session console worth reporting into.
-///
-/// Callers use it to decide whether capturing a command's output is worth its
-/// cost, so it checks only that the file is there rather than parsing it.
 pub fn is_active() -> bool {
     session_directory(None)
         .map(|directory| directory.join(SESSION_FILE).exists())
         .unwrap_or(false)
 }
 
-/// An appender for the session log, if this project has a console.
-///
-/// Best-effort like the rest: a caller that gets `None` simply has nowhere to
-/// mirror its output, which must never be a reason to fail their command.
+/// `None` simply means nowhere to mirror output to, which must never be a
+/// reason to fail the caller's command.
 pub fn sink(stream: &str) -> Option<Sink> {
     let directory = session_directory(None).ok()?;
     if !directory.join(SESSION_FILE).exists() {
@@ -842,20 +774,12 @@ pub fn sink(stream: &str) -> Option<Sink> {
     open_log(&directory, stream).ok()
 }
 
-/// Records a step in the session console, if this project has one.
+/// Best-effort and silent: no console, a read-only checkout or a full disk must
+/// never fail the command the user actually ran.
 ///
-/// Every call is best-effort and silent. A read-only checkout, a full disk, or
-/// no console at all must never be able to fail the command the user actually
-/// ran — they would be worse off than if the page had never existed.
-///
-/// The step an agent planned for this work is the one the user is already
-/// watching, so it is matched by its label as well as its id: an agent names
-/// its steps for the user and cannot be expected to guess the ids used here.
-/// Where the agent declared a plan and nothing matches, the note is dropped
-/// rather than added: the rail is the agent's to write, and a step appearing
-/// beneath the ones it declared reads as the workflow having grown a stage.
-/// Sessions started without a plan still collect these, which is the only way
-/// their console shows anything at all.
+/// Matched by label as well as id, because an agent names its steps for the
+/// user and cannot be expected to guess the ids used here. Where it declared a
+/// plan and nothing matches, the note is dropped rather than appended.
 pub fn note(id: &str, label: &str, state: &str, detail: Option<&str>) {
     let _ = amend(|session| apply_note(session, id, label, state, detail));
 }
@@ -901,10 +825,8 @@ fn apply_note(session: &mut Session, id: &str, label: &str, state: &str, detail:
     }
 }
 
-/// Applies a change to the running session and stamps it as still alive.
-///
-/// Callers in a polling loop double as the heartbeat: without a recent
-/// `updatedAt` the page cannot tell a slow deploy from an abandoned one.
+/// Stamps the session as still alive, so callers in a polling loop double as
+/// the heartbeat the page reads to tell a slow deploy from an abandoned one.
 fn amend(change: impl FnOnce(&mut Session)) -> Result<()> {
     amend_at(&session_directory(None)?, change)
 }
@@ -936,20 +858,14 @@ fn summary(session: &Session) -> CommandOutput {
     )
 }
 
-/// This process's ancestors, nearest first.
-///
-/// The chain is what links a sub-agent back to the session its supervisor
-/// started. Sub-agents are not guaranteed to inherit any of [`CHAT_VARIABLES`]
-/// — some harnesses give a spawned agent an identifier of its own — but they do
-/// run under the same harness process, and that is what this finds.
-///
-/// Each entry carries the process start time as well, so a recycled pid cannot
-/// be mistaken for the process that opened the session.
+/// What links a sub-agent back to the session its supervisor started: it may
+/// not inherit any of [`CHAT_VARIABLES`], but it runs under the same harness
+/// process. The start times are there so a recycled pid cannot be mistaken for
+/// the process that opened the session.
 fn ancestry() -> Vec<Owner> {
     let mut pid = std::process::id();
     let mut chain = Vec::new();
-    // Deep enough for any harness worth supporting, and a hard stop in case a
-    // platform ever reports a cycle.
+    // A hard stop in case a platform ever reports a cycle.
     for _ in 0..16 {
         if pid <= 1 {
             break;
@@ -974,11 +890,8 @@ fn process_parent(pid: u32) -> Option<(u32, String)> {
     Some((parent.trim().parse().ok()?, since.trim().to_owned()))
 }
 
-/// Resolves the directory the console lives in.
-///
 /// The repository root rather than the working directory, so a command run from
-/// a subdirectory reaches the same console instead of creating a second one the
-/// open page will never read.
+/// a subdirectory reaches the same console.
 fn project_root(explicit: Option<PathBuf>) -> Result<PathBuf> {
     if let Some(path) = explicit {
         return Ok(path);
@@ -999,7 +912,6 @@ fn project_root(explicit: Option<PathBuf>) -> Result<PathBuf> {
     }
 }
 
-/// Every session directory under this project, newest first.
 fn sessions(root: &Path) -> Vec<(PathBuf, Session)> {
     let mut found: Vec<(PathBuf, Session)> = fs::read_dir(root.join(DIRECTORY))
         .into_iter()
@@ -1013,12 +925,9 @@ fn sessions(root: &Path) -> Vec<(PathBuf, Session)> {
     found
 }
 
-/// Finds the session this invocation belongs to, without ever creating one.
-///
-/// Only `start` creates a session, which is what keeps a mislaid identifier
-/// cheap: the worst it can do is fail to find the console, never quietly open a
-/// second one that nobody is watching. The chain runs from most to least
-/// certain, and stops rather than choosing between equals.
+/// Never creates one, which is what keeps a mislaid identifier cheap: the worst
+/// it can do is fail to find the console, never open a second one nobody
+/// watches.
 fn session_directory(explicit: Option<PathBuf>) -> Result<PathBuf> {
     locate(&project_root(explicit)?, chat_id().as_deref(), &ancestry())
 }
@@ -1026,8 +935,7 @@ fn session_directory(explicit: Option<PathBuf>) -> Result<PathBuf> {
 fn locate(root: &Path, chat: Option<&str>, ancestry: &[Owner]) -> Result<PathBuf> {
     let directory = root.join(DIRECTORY);
 
-    // Layouts written before sessions were separated keep the console loose in
-    // .brainpod/, and an upgrade mid-workflow must not strand it.
+    // Layouts predating separated sessions keep the console loose in .brainpod/.
     if directory.join(SESSION_FILE).exists() {
         return Ok(directory);
     }
@@ -1040,10 +948,8 @@ fn locate(root: &Path, chat: Option<&str>, ancestry: &[Owner]) -> Result<PathBuf
         }
     }
 
-    // Nearest ancestor wins: two chats in one editor share the application
-    // process further up, and matching that would put both in one console. A
-    // step that matches more than one session is that shared process, and no
-    // step above it can separate them again, so stop rather than guess.
+    // Nearest ancestor wins: a step matching more than one session is the editor
+    // both chats share, and no step above it can separate them again.
     for step in ancestry {
         let mut matched = found
             .iter()
@@ -1099,7 +1005,7 @@ fn write_session(directory: &Path, session: &Session) -> Result<()> {
     replace(&directory.join(SESSION_FILE), &contents)
 }
 
-/// Writes through a temporary file so the page never reads a half-written file.
+/// Through a temporary file, so the page never reads a half-written one.
 fn replace(path: &Path, contents: &[u8]) -> Result<()> {
     let temporary = path.with_extension("tmp");
     fs::write(&temporary, contents)
@@ -1109,10 +1015,8 @@ fn replace(path: &Path, contents: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Adds `.brainpod/` to the repository's `.gitignore`, once.
-///
-/// Returns whether the file was changed. Existing content is never rewritten or
-/// reordered — only appended to, and only when no entry already covers it.
+/// Returns whether the file was changed. Existing content is only ever appended
+/// to, never rewritten or reordered.
 fn ensure_ignored(root: &Path) -> Result<bool> {
     if !root.join(".git").exists() {
         return Ok(false);
@@ -1249,8 +1153,6 @@ mod tests {
         assert_eq!(found, root.path().join(DIRECTORY).join(slug("chat-a")));
     }
 
-    /// A sub-agent handed an identifier of its own still belongs to the session
-    /// its supervisor started, and the shared process is what proves it.
     #[test]
     fn falls_back_to_the_process_that_started_the_session() {
         let root = TempDir::new().unwrap();
@@ -1261,7 +1163,6 @@ mod tests {
         assert_eq!(found, root.path().join(DIRECTORY).join(slug("chat-a")));
     }
 
-    /// The ancestry two chats share is the editor, not either chat.
     #[test]
     fn refuses_the_process_both_sessions_share() {
         let root = TempDir::new().unwrap();
@@ -1282,7 +1183,6 @@ mod tests {
         assert_eq!(found, root.path().join(DIRECTORY).join("solo"));
     }
 
-    /// An upgrade mid-workflow must not strand the console already on screen.
     #[test]
     fn keeps_reading_a_console_written_before_sessions_were_separated() {
         let root = TempDir::new().unwrap();
@@ -1298,8 +1198,6 @@ mod tests {
         super::apply_note(session, id, label, state, None);
     }
 
-    /// `image build` records its own step under the id `image`, but an agent
-    /// names its steps for the user and planned this one as something else.
     #[test]
     fn matches_a_planned_step_by_its_label() {
         let mut session = Session {
@@ -1341,7 +1239,6 @@ mod tests {
         assert_eq!(session.steps[0].label, "Checking your site responds");
     }
 
-    /// Without a plan these notes are the only thing the console has to show.
     #[test]
     fn still_records_steps_when_no_plan_was_declared() {
         let mut session = Session::default();
@@ -1355,8 +1252,6 @@ mod tests {
         assert_eq!(session.steps[0].state, "done");
     }
 
-    /// The session file is a file in the user's checkout, and a page navigates
-    /// on what it says.
     #[test]
     fn follows_a_console_url_only_back_to_this_machine() {
         assert_eq!(

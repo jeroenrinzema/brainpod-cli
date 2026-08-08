@@ -68,11 +68,6 @@ impl<'a> Registry<'a> {
         Ok(())
     }
 
-    /// Pushes the image, naming each blob as it starts.
-    ///
-    /// The naming is not decoration. Uploading a large image is the longest
-    /// stretch of a deploy in which nothing else is written anywhere, and a
-    /// console with nothing arriving is one the user reads as hung.
     pub async fn push(&self, repository: &str, tag: &str, image: &ImageLayout) -> Result<()> {
         let mut progress = crate::agent::sink("push");
         let total = image.manifest.layers.len() + 1;
@@ -248,7 +243,6 @@ mod tests {
     }
 }
 
-/// A digest short enough to read, long enough to tell two layers apart.
 fn short(digest: &str) -> &str {
     let digest = digest.strip_prefix("sha256:").unwrap_or(digest);
     &digest[..digest.len().min(12)]

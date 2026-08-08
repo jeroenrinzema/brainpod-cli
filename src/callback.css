@@ -121,7 +121,6 @@ h1 .quiet { color: var(--faint); font-weight: 500; }
 }
 .lead strong { color: var(--foreground); font-weight: 500; }
 
-/* ── the burst ────────────────────────────────────────────────── */
 .confetti {
   position: fixed; inset: 0; z-index: 0;
   overflow: hidden; pointer-events: none;
@@ -162,7 +161,6 @@ h1 .quiet { color: var(--faint); font-weight: 500; }
   to { transform: rotate(var(--turn)) rotate3d(1, .4, 0, 720deg); }
 }
 
-/* ── the rail ─────────────────────────────────────────────────── */
 .rail { display: flex; flex-direction: column; margin-top: 1.625rem; }
 .step { position: relative; display: grid; grid-template-columns: 1rem 1fr; gap: .75rem; }
 .step + .step { margin-top: .875rem; }
@@ -205,7 +203,6 @@ h1 .quiet { color: var(--faint); font-weight: 500; }
 .step p { font-size: .8125rem; line-height: 1.55; color: var(--muted-foreground); margin-top: .0625rem; }
 .step.is-todo p { color: var(--faint); }
 
-/* ── prompt block ─────────────────────────────────────────────── */
 .section-label {
   font-size: .75rem; line-height: 1.4; color: var(--faint);
   letter-spacing: .01em;
