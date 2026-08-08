@@ -27,8 +27,6 @@ const PROCESS_OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 const NETWORK_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 // Never chown /mise here: it arrives from an earlier layer, so rewriting its
 // ownership copies the entire toolchain into this one (194 MB for a Node app).
-// Its contents are already world-readable and executable; mise only needs to
-// write these two directories at runtime.
 const NON_ROOT_DOCKERFILE: &str = r#"FROM base
 RUN groupadd --gid 1000 railpack \
     && useradd --uid 1000 --gid 1000 --home-dir /home/railpack --create-home --shell /bin/false railpack \

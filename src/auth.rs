@@ -133,10 +133,6 @@ struct AuthorizeAnnouncement<'a> {
     expires_in_seconds: u64,
 }
 
-/// Writes the authorization URL to stdout before waiting for the callback.
-///
-/// The authorization URL redirects to a loopback address, so it only completes
-/// in a browser running on the same machine as the CLI.
 fn write_authorization_notice(authorize_url: &str, options: LoginOptions) -> Result<()> {
     let notice = authorization_notice(authorize_url, options)?;
     let stdout = io::stdout();
