@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.system }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-latest
+            artifact: brainpod-amd64-linux
+          - system: x86_64-darwin
+            runner: macos-14
+            artifact: brainpod-amd64-macos
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+            artifact: brainpod-arm64-linux
+          - system: aarch64-darwin
+            runner: macos-14
+            artifact: brainpod-arm64-macos
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version from release tag
+        id: version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAG:-}" ]; then
+            echo "::error::release tag_name is empty, refusing to build an unversioned release"
+            exit 1
+          fi
+          version="${TAG#v}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::release tag '$TAG' is not a semver version, refusing to ship a wrong version"
+            exit 1
+          fi
+          printf '%s\n' "$version" > VERSION
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-v1-${{ matrix.system }}-${{ hashFiles('flake.nix', 'flake.lock', 'Cargo.lock') }}
+          restore-prefixes-first-match: nix-v1-${{ matrix.system }}-
+          gc-max-store-size: 2G
+
+      - name: Build
+        run: nix build ".#packages.${{ matrix.system }}.default"
+
+      - name: Verify reported version
+        env:
+          EXPECTED: brainpod ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if ! reported="$(./result/bin/brainpod --version 2>&1)"; then
+            echo "::error::could not run the ${{ matrix.system }} binary on ${{ matrix.runner }}: $reported"
+            exit 1
+          fi
+          if [ "$reported" != "$EXPECTED" ]; then
+            echo "::error::binary reports '$reported' but the release tag expects '$EXPECTED'"
+            exit 1
+          fi
+          echo "$reported"
+
+      - name: Package
+        run: |
+          mkdir package
+          cp -L result/bin/brainpod package/brainpod
+          tar -C package -czf "${{ matrix.artifact }}.tar.gz" brainpod
+
+      - name: Publish artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Attach binaries to release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: binaries
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: binaries
+        run: sha256sum *.tar.gz > SHA256SUMS
+
+      - name: Upload to release
+        working-directory: binaries
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" *.tar.gz SHA256SUMS --clobber

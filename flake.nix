@@ -21,9 +21,15 @@
       "aarch64-linux"
       "aarch64-darwin"
     ];
+    lib = nixpkgs.lib;
     overlays = [(import rust-overlay)];
     filter = import nix-filter;
-    eachSystem = nixpkgs.lib.genAttrs supportedSystems;
+    eachSystem = lib.genAttrs supportedSystems;
+
+    # Release builds get their version from the tag: the release workflow
+    # rewrites ./VERSION before `nix build`. Keeping it out of the crane source
+    # filter below means a new version does not invalidate cargoArtifacts.
+    version = lib.head (lib.splitString "\n" (builtins.readFile ./VERSION));
 
     toolchainFor = pkgs:
       pkgs.rust-bin.nightly.latest.minimal.override {
@@ -37,6 +43,7 @@
         root = ./.;
         include = [
           "src"
+          "build.rs"
           "Cargo.toml"
           "Cargo.lock"
         ];
@@ -50,9 +57,9 @@
     in {
       default = craneLib.buildPackage (craneArgs
         // {
-          inherit cargoArtifacts;
+          inherit cargoArtifacts version;
           pname = "brainpod-cli";
-          version = "0.1.0";
+          BRAINPOD_VERSION = version;
           meta.mainProgram = "brainpod";
         });
     });

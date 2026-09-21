@@ -1,4 +1,6 @@
+use std::io::{self, Write};
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use axum::Router;
@@ -8,7 +10,7 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use reqwest::Url;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
@@ -18,12 +20,20 @@ use crate::client::Client;
 use crate::config::Config;
 
 const CALLBACK_PATH: &str = "/callback";
+const AUTHENTICATION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LoginOptions {
+    pub no_browser: bool,
+    pub json: bool,
+}
 
 pub async fn login(
     dashboard_endpoint: &str,
     api_endpoint: &str,
     config: &mut Config,
     config_path: &Path,
+    options: LoginOptions,
 ) -> Result<Value> {
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
@@ -53,13 +63,14 @@ pub async fn login(
             .context("authentication callback server failed")
     });
 
-    if let Err(error) = webbrowser::open(authorize_url.as_str())
-        .with_context(|| format!("failed to open the browser for {authorize_url}"))
+    write_authorization_notice(authorize_url.as_str(), options)?;
+
+    if !options.no_browser
+        && let Err(error) = webbrowser::open(authorize_url.as_str())
     {
-        drop(requests);
-        let _ = shutdown_sender.send(());
-        let _ = server.await;
-        return Err(error);
+        eprintln!(
+            "warning: failed to open the browser automatically: {error}; open the URL above in a browser on this machine, or create an API token in the Brainpod dashboard and run `brainpod config set api-token <token>`"
+        );
     }
 
     let request = tokio::select! {
@@ -69,6 +80,14 @@ pub async fn login(
             result
                 .context("authentication callback server task failed")??;
             return Err(anyhow!("authentication callback server stopped unexpectedly"));
+        }
+        _ = tokio::time::sleep(AUTHENTICATION_TIMEOUT) => {
+            drop(requests);
+            let _ = shutdown_sender.send(());
+            server
+                .await
+                .context("authentication callback server task failed")??;
+            return Err(anyhow!("authentication timed out after 10 minutes"));
         }
     };
 
@@ -104,6 +123,43 @@ pub async fn login(
         .get(&["v1", "me"], &[])
         .await
         .context("failed to verify authentication with the Brainpod API")
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthorizeAnnouncement<'a> {
+    event: &'static str,
+    url: &'a str,
+    expires_in_seconds: u64,
+}
+
+/// Writes the authorization URL to stdout before waiting for the callback.
+///
+/// The authorization URL redirects to a loopback address, so it only completes
+/// in a browser running on the same machine as the CLI.
+fn write_authorization_notice(authorize_url: &str, options: LoginOptions) -> Result<()> {
+    let notice = authorization_notice(authorize_url, options)?;
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+    writeln!(stdout, "{notice}").context("failed to write the authorization announcement")?;
+    stdout
+        .flush()
+        .context("failed to flush the authorization announcement")
+}
+
+fn authorization_notice(authorize_url: &str, options: LoginOptions) -> Result<String> {
+    if options.json {
+        return serde_json::to_string(&AuthorizeAnnouncement {
+            event: "authorize",
+            url: authorize_url,
+            expires_in_seconds: AUTHENTICATION_TIMEOUT.as_secs(),
+        })
+        .context("failed to serialize the authorization announcement");
+    }
+
+    Ok(format!(
+        "Open this URL in a browser on this machine to authenticate: {authorize_url}"
+    ))
 }
 
 fn generate_state() -> Result<String> {
@@ -292,7 +348,39 @@ impl IntoResponse for Page {
 
 #[cfg(test)]
 mod tests {
-    use super::{Callback, CallbackQuery, authorization_url, parse_callback_query};
+    use super::{
+        Callback, CallbackQuery, LoginOptions, authorization_notice, authorization_url,
+        parse_callback_query,
+    };
+
+    #[test]
+    fn announces_the_authorization_url_as_a_single_json_line() {
+        let notice = authorization_notice(
+            "https://brainpod.io/cli/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A1234%2Fcallback&state=state-value",
+            LoginOptions {
+                no_browser: true,
+                json: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            notice,
+            "{\"event\":\"authorize\",\"url\":\"https://brainpod.io/cli/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A1234%2Fcallback&state=state-value\",\"expiresInSeconds\":600}"
+        );
+    }
+
+    #[test]
+    fn announces_the_authorization_url_as_prose_without_json() {
+        let notice =
+            authorization_notice("https://brainpod.io/cli/authorize", LoginOptions::default())
+                .unwrap();
+
+        assert_eq!(
+            notice,
+            "Open this URL in a browser on this machine to authenticate: https://brainpod.io/cli/authorize"
+        );
+    }
 
     #[test]
     fn builds_authorization_url_with_encoded_callback() {

@@ -36,8 +36,29 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-v1-${{ matrix.system }}-${{ hashFiles('flake.nix', 'flake.lock', 'Cargo.lock') }}
+          restore-prefixes-first-match: nix-v1-${{ matrix.system }}-
+          gc-max-store-size: 2G
+
       - name: Build
         run: nix build ".#packages.${{ matrix.system }}.default"
+
+      - name: Verify reported version
+        run: |
+          set -euo pipefail
+          expected="brainpod $(tr -d '[:space:]' < VERSION)"
+          if ! reported="$(./result/bin/brainpod --version 2>&1)"; then
+            echo "::error::could not run the ${{ matrix.system }} binary on ${{ matrix.runner }}: $reported"
+            exit 1
+          fi
+          if [ "$reported" != "$expected" ]; then
+            echo "::error::binary reports '$reported' but VERSION expects '$expected'"
+            exit 1
+          fi
+          echo "$reported"
 
       - name: Package
         run: |

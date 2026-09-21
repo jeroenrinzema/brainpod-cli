@@ -28,18 +28,19 @@ pub fn generate(mut root: Command, path: &[String]) -> Result<Value> {
 
     Ok(json!({
         "schemaVersion": 1,
-        "cliVersion": root.get_version().unwrap_or(env!("CARGO_PKG_VERSION")),
+        "cliVersion": root.get_version().unwrap_or(env!("BRAINPOD_VERSION")),
         "command": describe_command(command, &resolved_path),
         "globalArguments": global_arguments,
         "outputContract": {
             "default": "Deterministic line-oriented text.",
-            "json": "Pass --json to emit the complete API response as one JSON value.",
+            "json": "Pass --json to emit the complete API response as one JSON value for non-streaming commands.",
+            "loginJson": "Login emits an authorize event followed by an authenticated event as NDJSON on stdout.",
             "eventWatchJson": "Event watches emit one JSON value per line as NDJSON.",
             "waitProgress": "Interactive waits report unhealthy-to-healthy transitions on stderr; progress is suppressed when stderr is redirected or --json is used.",
             "errors": "Errors are written to stderr and return a non-zero exit code; --json also makes errors JSON."
         },
         "guidance": [
-            "Use --json for complete machine-readable API responses and errors.",
+            "Use --json for complete machine-readable API responses and errors; login and event watches are streamed as NDJSON.",
             "Pod-scoped commands require --pod, BRAINPOD_POD, or a configured default pod.",
             "Image builds prefer an existing Dockerfile, otherwise use Railpack, target the best architecture supported by the API (override with --platform), and push to the selected pod's private registry namespace.",
             "Blueprint installation and resource mutations update the mutable draft; run deploy separately when ready, optionally with --wait.",
@@ -139,8 +140,7 @@ fn describe_argument(command: &Command, argument: &Arg) -> Value {
         .get_value_names()
         .map(|names| names.iter().map(ToString::to_string).collect::<Vec<_>>())
         .unwrap_or_else(|| {
-            takes_value.then(|| vec![argument.get_id().as_str().to_ascii_uppercase()])
-                .unwrap_or_default()
+            if takes_value { vec![argument.get_id().as_str().to_ascii_uppercase()] } else { Default::default() }
         });
     let defaults = argument
         .get_default_values()
