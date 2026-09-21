@@ -229,3 +229,21 @@ Create and deploy:
 brainpod resource create --file resources.json --json
 brainpod deploy --summary "Configure application resources" --json
 ```
+
+## Versioning
+
+`brainpod --version` reports the release the binary was built from. The release workflow derives that version from the published git tag, so nothing in the repository has to be bumped by hand:
+
+```sh
+brainpod --version
+brainpod 0.0.6
+```
+
+The tag is written to `VERSION`, read by `flake.nix`, and passed to the build as `BRAINPOD_VERSION`. Builds that the release workflow did not stamp report `0.0.0-dev`, suffixed with the commit they were built from when git metadata is available:
+
+```sh
+brainpod --version
+brainpod 0.0.0-dev+fce533d7687d
+```
+
+`Cargo.toml` deliberately stays at `0.0.0`; it is not the release version. Both workflows run the binary they just built and fail if its reported version disagrees with the tag.

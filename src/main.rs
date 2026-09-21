@@ -23,7 +23,7 @@ const UPGRADE_URL: &str = "https://brainpod.io/onboarding?upgrade=1";
 #[derive(Debug, Parser)]
 #[command(
     name = "brainpod",
-    version,
+    version = env!("BRAINPOD_VERSION"),
     about = "Manage Brainpod deployments, images, and resources",
     after_help = "For machine-readable command metadata, run `brainpod describe --json`."
 )]
